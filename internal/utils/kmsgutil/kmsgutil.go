@@ -64,14 +64,8 @@ func GetSysrqMsg(command string) (string, error) {
 	}
 
 	fd := kmsgFile.Fd()
-	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
-	if errno != 0 {
-		return "", err
-	}
-
-	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags|syscall.O_NONBLOCK)
-	if errno != 0 {
-		return "", err
+	if err := setNonBlocking(fd); err != nil {
+		return "", fmt.Errorf("set %s to non-blocking mode: %w", kmsgPath, err)
 	}
 
 	var buffer strings.Builder
@@ -90,6 +84,22 @@ func GetSysrqMsg(command string) (string, error) {
 	}
 
 	return formatKmsgs(buffer.String()), nil
+}
+
+// setNonBlocking flips O_NONBLOCK on fd so /dev/kmsg reads end with
+// EAGAIN instead of blocking once the ring buffer is drained.
+func setNonBlocking(fd uintptr) error {
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
+	if errno != 0 {
+		return errno
+	}
+
+	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags|syscall.O_NONBLOCK)
+	if errno != 0 {
+		return errno
+	}
+
+	return nil
 }
 
 // format kmsg to human-readable format

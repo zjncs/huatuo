@@ -16,7 +16,9 @@ package kmsgutil
 
 import (
 	"errors"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -192,6 +194,37 @@ func TestGetBootTime(t *testing.T) {
 }
 
 // Note: GetSysrqMsg, GetAllCPUsBT, and GetBlockedProcessesBT involve system I/O (/dev/kmsg, /proc/sysrq-trigger)
-// and are better suited for integration tests with mocked file systems (e.g., using afero or test containers).
+// and are better suited for integration tests with mocked file system (e.g., using afero or test containers).
 // Unit tests for these would require dependency injection for os.Open, syscall.Read, etc., to isolate logic.
-// For brevity, they are omitted here; focus on pure functions above.
+// The non-blocking fd setup they rely on is extracted into setNonBlocking and covered below.
+
+func TestSetNonBlockingInvalidFD(t *testing.T) {
+	err := setNonBlocking(^uintptr(0))
+	if err == nil {
+		t.Fatal("setNonBlocking(invalid fd) error = nil, want non-nil")
+	}
+	if !errors.Is(err, syscall.EBADF) {
+		t.Fatalf("setNonBlocking(invalid fd) error = %v, want EBADF", err)
+	}
+}
+
+func TestSetNonBlockingSetsFlag(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "kmsgutil-nonblock")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	defer f.Close()
+
+	fd := f.Fd()
+	if err := setNonBlocking(fd); err != nil {
+		t.Fatalf("setNonBlocking() error = %v, want nil", err)
+	}
+
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
+	if errno != 0 {
+		t.Fatalf("F_GETFL error = %v", errno)
+	}
+	if flags&syscall.O_NONBLOCK == 0 {
+		t.Fatal("O_NONBLOCK is not set after setNonBlocking()")
+	}
+}
